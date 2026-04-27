@@ -1,0 +1,11 @@
+langchain
+langchain-google-genai
+langchain-core
+langchain-community
+langgraph
+plotly
+ipywidgets
+pandas
+xlrd
+openpyxl
+gradio
