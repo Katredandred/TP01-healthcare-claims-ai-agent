@@ -23,32 +23,32 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 
 # ------------------------------------------------------------------
-# API key — set GEMINI_API_KEY as an environment variable or
-# as a Hugging Face Space secret before deploying
+# API key — set GEMINI_API_KEY as a Hugging Face Space secret
 # ------------------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    raise EnvironmentError(
-        "GEMINI_API_KEY not found. "
-        "Set it as an environment variable locally, "
-        "or add it to your Hugging Face Space secrets."
-    )
+    raise EnvironmentError("GEMINI_API_KEY not found in environment secrets.")
 
 os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
 
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-tools = [investigate_claims_spike, analyze_incremental_paid_claims]
+llm            = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+tools          = [investigate_claims_spike, analyze_incremental_paid_claims]
 agent_executor = create_react_agent(model=llm, tools=tools)
 
 
 # ------------------------------------------------------------------
 # Helper: baseline plot
 # ------------------------------------------------------------------
-def plot_baseline(file_path: str):
+def plot_baseline(file_obj):
+    """Accept a Gradio file object and plot the baseline billed trend."""
+    if file_obj is None:
+        return None, [("", "⚠️ Please upload an Excel claims file first.")]
+
+    file_path = file_obj.name  # Gradio passes a NamedTemporaryFile
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
-        claims = pd.read_excel(file_path, sheet_name='fake claims')
-        df = pd.merge(claims, enrollment, on='Member_ID', how='inner')
+        claims     = pd.read_excel(file_path, sheet_name='fake claims')
+        df         = pd.merge(claims, enrollment, on='Member_ID', how='inner')
 
         if pd.api.types.is_numeric_dtype(df['Service_Date']):
             df['Date'] = pd.to_datetime(df['Service_Date'], unit='D', origin='1899-12-30')
@@ -57,7 +57,10 @@ def plot_baseline(file_path: str):
             df['Date'] = df['Date'].fillna(pd.to_datetime(df['Service_Date'], errors='coerce'))
 
         df['YearMonth'] = df['Date'].dt.to_period('M')
-        stacked = df.groupby(['YearMonth', 'Region'])['Billed_Amt'].sum().reset_index().sort_values('YearMonth')
+        stacked = (
+            df.groupby(['YearMonth', 'Region'])['Billed_Amt']
+            .sum().reset_index().sort_values('YearMonth')
+        )
         stacked['Plot_Date'] = stacked['YearMonth'].dt.to_timestamp()
 
         fig = px.bar(
@@ -65,60 +68,62 @@ def plot_baseline(file_path: str):
             title=f"Baseline Monthly Billed Trend — {os.path.basename(file_path)}",
             labels={'Billed_Amt': 'Total Billed Amount ($)', 'Plot_Date': 'Month'}
         )
-        fig.update_xaxes(dtick="M1", tickformat="%b", tickangle=0)
-        return fig
+        fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
+
+        intro = [(
+            "",
+            "📊 File loaded successfully! Here is your baseline monthly billed trend by region.\n\n"
+            "You can now ask me to investigate anomalies, decompose month-over-month drivers, "
+            "or summarize any patterns you see."
+        )]
+        return fig, intro
 
     except Exception as e:
-        return f"❌ Error loading data: {e}"
+        return None, [("", f"❌ Error loading file: {e}\n\nPlease ensure your Excel file contains "
+                           f"sheets named 'fake enrollment' and 'fake claims' with a shared Member_ID column.")]
 
 
 # ------------------------------------------------------------------
 # Helper: chat with agent
 # ------------------------------------------------------------------
-def chat_with_agent(user_message: str, file_path: str) -> str:
-    system_instruction = (
-        "You are a helpful healthcare AI data assistant. "
+def chat_with_agent(message, file_obj, history):
+    if not message.strip():
+        return history, ""
+
+    if file_obj is None:
+        history = history or []
+        history.append((message, "⚠️ Please upload an Excel claims file before asking questions."))
+        return history, ""
+
+    file_path = file_obj.name
+    system_prompt = (
+        "You are a precise healthcare claims analytics assistant. "
         "Use your tools to investigate data files when asked. "
-        "Summarize the tool output clearly in plain text."
+        "Respond concisely and in plain English."
     )
     full_prompt = (
-        f"{system_instruction}\n\n"
-        f"[Context: The target file is '{file_path}']. "
-        f"User says: {user_message}"
+        f"{system_prompt}\n\n"
+        f"[File: '{file_path}']\n"
+        f"User: {message}"
     )
     try:
         response = agent_executor.invoke({"messages": [("user", full_prompt)]})
-        raw = response['messages'][-1].content
-        if isinstance(raw, list):
-            return " ".join(item.get('text', '') for item in raw if isinstance(item, dict)).strip()
-        return str(raw).strip()
+        raw      = response['messages'][-1].content
+        reply    = (
+            " ".join(item.get('text', '') for item in raw if isinstance(item, dict)).strip()
+            if isinstance(raw, list) else str(raw).strip()
+        )
     except Exception as e:
-        return f"❌ Error processing request: {e}"
+        reply = f"❌ Error: {e}"
 
-
-# ------------------------------------------------------------------
-# Gradio UI
-# ------------------------------------------------------------------
-def handle_plot(file_path):
-    fig = plot_baseline(file_path)
-    if isinstance(fig, str):
-        return fig, fig          # error string → both outputs
-    intro = (
-        "📊 Baseline trend loaded successfully!\n\n"
-        "🤖 Agent: Here is your monthly billed trend by region. "
-        "Would you like me to investigate the month with the most significant spike, "
-        "or analyze month-over-month paid claims drivers?"
-    )
-    return fig, intro
-
-
-def handle_chat(message, file_path, history):
-    reply = chat_with_agent(message, file_path)
     history = history or []
     history.append((message, reply))
     return history, ""
 
 
+# ------------------------------------------------------------------
+# Gradio UI
+# ------------------------------------------------------------------
 with gr.Blocks(
     title="🏥 Healthcare Claims AI Agent",
     theme=gr.themes.Soft(primary_hue="blue")
@@ -126,34 +131,45 @@ with gr.Blocks(
 
     gr.Markdown("""
     # 🏥 Healthcare Claims AI Agent
-    **TP01 — Optimized** | LangChain · LangGraph · Google Gemini · Gradio
+    **TP01 — Optimized** | LangChain · LangGraph · Google Gemini 2.5 Flash · Gradio
 
-    Upload your Excel claims file, plot the baseline trend, then chat with the AI agent
-    to investigate anomalies and decompose month-over-month drivers.
+    Upload your Excel claims file to get started. The agent will plot your baseline trend
+    and answer natural language questions about anomalies and month-over-month drivers.
 
-    > **Required Excel sheets:** `fake enrollment` and `fake claims` with a shared `Member_ID` column.
+    > **Required:** Excel file with sheets named `fake enrollment` and `fake claims`,
+    > both containing a `Member_ID` column.
     """)
 
+    gr.Markdown("---")
+
+    # ── Step 1: File upload ──────────────────────────────────
+    gr.Markdown("### Step 1 — Upload Your Claims Data")
     with gr.Row():
-        file_input = gr.Textbox(
-            label="📁 Excel File Path",
-            value="excel claims.xls",
-            placeholder="e.g. excel claims.xls or /path/to/file.xls",
+        file_upload = gr.File(
+            label="📂 Upload Excel Claims File (.xls or .xlsx)",
+            file_types=[".xls", ".xlsx"],
             scale=4
         )
         plot_btn = gr.Button("📊 Plot Baseline Trend", variant="primary", scale=1)
 
-    chart_output = gr.Plot(label="Baseline Monthly Trend")
+    chart_output = gr.Plot(label="Baseline Monthly Billed Trend")
 
     gr.Markdown("---")
-    gr.Markdown("### 💬 Chat with the AI Agent")
 
-    chatbot = gr.Chatbot(label="Conversation", height=350, bubble_full_width=False)
+    # ── Step 2: Chat ─────────────────────────────────────────
+    gr.Markdown("### Step 2 — Chat with the AI Agent")
+
+    chatbot = gr.Chatbot(
+        label="Conversation",
+        height=380,
+        bubble_full_width=False,
+        show_label=False
+    )
 
     with gr.Row():
         chat_input = gr.Textbox(
-            label="Your message",
-            placeholder="e.g. Which month had the biggest spike? What drove the increase?",
+            label="",
+            placeholder="Ask a question about your claims data…",
             scale=5
         )
         send_btn = gr.Button("Send ➤", variant="primary", scale=1)
@@ -169,10 +185,22 @@ with gr.Blocks(
         label="💡 Example questions"
     )
 
-    # Wire up events
-    plot_btn.click(fn=handle_plot, inputs=[file_input], outputs=[chart_output, chatbot])
-    send_btn.click(fn=handle_chat, inputs=[chat_input, file_input, chatbot], outputs=[chatbot, chat_input])
-    chat_input.submit(fn=handle_chat, inputs=[chat_input, file_input, chatbot], outputs=[chatbot, chat_input])
+    # ── Wire up events ────────────────────────────────────────
+    plot_btn.click(
+        fn=plot_baseline,
+        inputs=[file_upload],
+        outputs=[chart_output, chatbot]
+    )
+    send_btn.click(
+        fn=chat_with_agent,
+        inputs=[chat_input, file_upload, chatbot],
+        outputs=[chatbot, chat_input]
+    )
+    chat_input.submit(
+        fn=chat_with_agent,
+        inputs=[chat_input, file_upload, chatbot],
+        outputs=[chatbot, chat_input]
+    )
 
 
 if __name__ == "__main__":
