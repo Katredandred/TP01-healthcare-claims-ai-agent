@@ -131,9 +131,9 @@ Your Excel file must contain two sheets:
 | Name | GitHub | Role |
 |---|---|---|
 | Kate Lawal | [@Katredandred](https://github.com/Katredandred) | Project Lead · AI Agent Architecture |
-| Contributor 2 | [@burnsnathanielpcbz-jpg](https://github.com/burnsnathanielpcbz-jpg) | Project Lead · AI Agent Architecture|
-| Contributor 3 | [@placeholder_username3](https://github.com/placeholder_username3) | *(update with teammate's username)* |
-| Contributor 4 | [@placeholder_username4](https://github.com/placeholder_username4) | *(update with teammate's username)* |
+| Nathan Burns | [@burnsnathanielpcbz-jpg](https://github.com/burnsnathanielpcbz-jpg) | Project Lead · AI Agent Architecture|
+| Olufemi Isijola | [@placeholder_username3](https://github.com/placeholder_username3) | *(update with teammate's username)* |
+| Kundan Singh | [@placeholder_username4](https://github.com/placeholder_username4) | *(update with teammate's username)* |
 
 ---
 
