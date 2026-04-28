@@ -1,4 +1,6 @@
 huggingface-hub==0.23.2
+fastapi==0.110.3
+pydantic==2.7.1
 langchain
 langchain-google-genai
 langchain-core
