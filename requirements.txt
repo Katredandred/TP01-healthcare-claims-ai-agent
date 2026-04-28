@@ -1,3 +1,5 @@
+huggingface_hub==0.23.2
+gradio==4.44.1
 langchain
 langchain-google-genai
 langchain-core
@@ -6,4 +8,3 @@ langgraph
 plotly
 pandas
 openpyxl
-gradio
