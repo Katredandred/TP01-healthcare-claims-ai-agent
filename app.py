@@ -31,7 +31,7 @@ if not GEMINI_API_KEY:
 
 os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
 
-llm            = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+llm            = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 tools          = [investigate_claims_spike, analyze_incremental_paid_claims]
 agent_executor = create_react_agent(model=llm, tools=tools)
 
