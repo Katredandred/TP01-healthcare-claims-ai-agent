@@ -1,7 +1,7 @@
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from IPython.display import display
+#from IPython.display import display
 from langchain.tools import tool
 
 
@@ -75,7 +75,7 @@ def investigate_claims_spike(file_path: str) -> str:
         showarrow=True, arrowhead=2, arrowcolor="red", font=dict(color="red", size=12), ay=-50
     )
 
-    display(go.FigureWidget(fig))
+    #display(go.FigureWidget(fig))
 
     return (f"The most significant change occurred in {str(spike_month)} with a swing of ${abs(dollar_swing):,.2f} "
             f"({abs(spike_pct):.1f}% {direction}). The primary driver was '{top_driver_type}' claims in the "
@@ -130,7 +130,7 @@ def analyze_incremental_paid_claims(file_path: str) -> str:
 
     fig.update_xaxes(dtick="M1", tickformat="%b", tickangle=0)
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
-    display(go.FigureWidget(fig))
+    #display(go.FigureWidget(fig))
 
     target_month = pct_pt_df.index[-1]
     prev_month = unique_months[unique_months.index(target_month) - 1]
