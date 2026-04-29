@@ -39,17 +39,29 @@ agent_executor = create_react_agent(model=llm, tools=tools)
 # ------------------------------------------------------------------
 # Helper: baseline plot
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Helper: baseline plot
+# ------------------------------------------------------------------
 def plot_baseline(file_obj):
-    """Accept a Gradio file object and plot the baseline billed trend."""
     if file_obj is None:
         return None, [("", "⚠️ Please upload an Excel claims file first.")]
 
-    file_path = file_obj.name  # Gradio passes a NamedTemporaryFile
+    file_path = file_obj.name
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims     = pd.read_excel(file_path, sheet_name='fake claims')
-        df         = pd.merge(claims, enrollment, on='Member_ID', how='inner')
+        
+        # 1. Strip spaces just in case, to ensure IDs match perfectly
+        enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
+        claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
 
+        # 2. LEFT MERGE: Keep all claims, even if demographic data is missing
+        df = pd.merge(claims, enrollment, on='Member_ID', how='left')
+
+        # 3. CRITICAL FIX: Fill missing regions so Pandas doesn't drop them in the groupby
+        df['Region'] = df['Region'].fillna('Unknown Region')
+
+        # 4. Parse Dates
         if pd.api.types.is_numeric_dtype(df['Service_Date']):
             df['Date'] = pd.to_datetime(df['Service_Date'], unit='D', origin='1899-12-30')
         else:
@@ -57,31 +69,32 @@ def plot_baseline(file_obj):
             df['Date'] = df['Date'].fillna(pd.to_datetime(df['Service_Date'], errors='coerce'))
 
         df['YearMonth'] = df['Date'].dt.to_period('M')
+        
+        # 5. Group by Billed_Amt to get the absolute totals
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Billed_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
         stacked['Plot_Date'] = stacked['YearMonth'].dt.to_timestamp()
 
+        # Render the chart
         fig = px.bar(
             stacked, x='Plot_Date', y='Billed_Amt', color='Region', barmode='stack',
-            title=f"Baseline Monthly Billed Trend — {os.path.basename(file_path)}",
-            labels={'Billed_Amt': 'Total Billed Amount ($)', 'Plot_Date': 'Month'}
+            title=f"Absolute Monthly Billed Trend — {os.path.basename(file_path)}",
+            labels={'Billed_Amt': 'Absolute Billed Amount ($)', 'Plot_Date': 'Month'}
         )
         fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
 
         intro = [(
             "",
-            "📊 File loaded successfully! Here is your baseline monthly billed trend by region.\n\n"
+            "📊 File loaded successfully! Here is your true absolute billed trend.\n\n"
             "You can now ask me to investigate anomalies, decompose month-over-month drivers, "
             "or summarize any patterns you see."
         )]
         return fig, intro
 
     except Exception as e:
-        return None, [("", f"❌ Error loading file: {e}\n\nPlease ensure your Excel file contains "
-                           f"sheets named 'fake enrollment' and 'fake claims' with a shared Member_ID column.")]
-
+        return None, [("", f"❌ Error loading file: {e}")]
 
 # ------------------------------------------------------------------
 # Helper: chat with agent
