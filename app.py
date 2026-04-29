@@ -85,7 +85,7 @@ def plot_baseline(file_obj):
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
-# Group and Plot AGGREGATE PAID AMOUNT
+    # Group and Plot AGGREGATE PAID AMOUNT
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
