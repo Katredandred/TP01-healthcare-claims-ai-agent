@@ -66,7 +66,7 @@ def plot_baseline(file_obj):
         fig = px.bar(
             stacked, x='Plot_Date', y='Billed_Amt', color='Region', barmode='stack',
             title=f"Baseline Monthly Billed Trend — {os.path.basename(file_path)}",
-            labels={'Billed_Amt': 'Total Billed Amount ($)', 'Plot_Date': 'Month'}
+            labels={'Billed_Amt': 'Total Change in Billed Amount ($)', 'Plot_Date': 'Month'}
         )
         fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
 
