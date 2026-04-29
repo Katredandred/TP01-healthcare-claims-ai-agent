@@ -40,7 +40,7 @@ agent_executor = create_react_agent(model=llm, tools=tools)
 # Helper: baseline plot
 # ------------------------------------------------------------------
 def plot_baseline(file_obj):
-    """Accept a Gradio file object and plot the absolute billed trend."""
+    """Accept a Gradio file object and plot the aggregate paid trend."""
     if file_obj is None:
         return None, [("", "⚠️ Please upload an Excel claims file first.")]
 
@@ -49,31 +49,28 @@ def plot_baseline(file_obj):
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims     = pd.read_excel(file_path, sheet_name='fake claims')
         
-        # 1. Clean IDs and perform LEFT merge
+        # Merge
         enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
         claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
         df = pd.merge(claims, enrollment, on='Member_ID', how='left')
         df['Region'] = df['Region'].fillna('Unknown Region')
 
-        # 2. Clean Billed_Amt
-        if df['Billed_Amt'].dtype == 'object':
-            df['Billed_Amt'] = pd.to_numeric(
-                df['Billed_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
+        # Clean Paid_Amt for the aggregate plot
+        if df['Paid_Amt'].dtype == 'object':
+            df['Paid_Amt'] = pd.to_numeric(
+                df['Paid_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
                 errors='coerce'
             )
-        df['Billed_Amt'] = df['Billed_Amt'].fillna(0)
+        df['Paid_Amt'] = df['Paid_Amt'].fillna(0)
 
-        # 3. Robust Date Parsing
+        # Robust Date Parsing
         if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
             df['Date'] = df['Service_Date']
         else:
             date_strs = df['Service_Date'].astype(str).str.strip()
-            # Try strict MM/DD/YYYY first
             df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-            # Fallback for general strings
             df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
             
-            # Fallback for Excel serial numbers
             num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
             is_excel_date = num_vals.notna() & (num_vals < 100000)
             if is_excel_date.any():
@@ -84,24 +81,23 @@ def plot_baseline(file_obj):
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
-        # 4. Group and Plot
+        # Group and Plot AGGREGATE PAID AMOUNT
         stacked = (
-            df.groupby(['YearMonth', 'Region'])['Billed_Amt']
+            df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
         stacked['Plot_Date'] = stacked['YearMonth'].dt.to_timestamp()
 
         fig = px.bar(
-            stacked, x='Plot_Date', y='Billed_Amt', color='Region', barmode='stack',
-            title=f"Absolute Monthly Billed Trend — {os.path.basename(file_path)}",
-            labels={'Billed_Amt': 'Absolute Billed Amount ($)', 'Plot_Date': 'Month'}
+            stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
+            title=f"Aggregate Monthly Paid Claims — {os.path.basename(file_path)}",
+            labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'}
         )
         
-        # 5. Format Axes
-        fig.update_layout(yaxis_tickformat=",.0f")  # Forces absolute numbers with commas
+        fig.update_layout(yaxis_tickformat=",.0f")
         fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
 
-        intro = [("", "📊 File loaded successfully! Here is your true absolute billed trend.")]
+        intro = [("", "📊 File loaded successfully! Here is your aggregate paid claims trend.")]
         return fig, intro
 
     except Exception as e:
