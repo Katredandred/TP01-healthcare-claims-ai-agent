@@ -12,7 +12,7 @@ from langchain.tools import tool
 def investigate_claims_spike(file_path: str) -> str:
     """
     Analyzes hospital claims data from an Excel file to find the most significant month-over-month
-    dollar change in BILLED amounts, identifies drivers, and displays a stacked bar chart.
+    dollar change in BILLED amounts, identifies drivers, and identifies the anomaly.
     """
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
@@ -21,6 +21,7 @@ def investigate_claims_spike(file_path: str) -> str:
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
+    # Date parsing logic (kept from your original)
     if pd.api.types.is_numeric_dtype(df_temp['Service_Date']):
         df_temp['Date'] = pd.to_datetime(df_temp['Service_Date'], unit='D', origin='1899-12-30')
     else:
@@ -29,6 +30,7 @@ def investigate_claims_spike(file_path: str) -> str:
 
     df_temp['YearMonth'] = df_temp['Date'].dt.to_period('M')
 
+    # Anomaly Detection Logic
     monthly_trend = df_temp.groupby('YearMonth')['Billed_Amt'].sum().reset_index().sort_values('YearMonth')
     if len(monthly_trend) < 2:
         return "Not enough monthly data."
@@ -37,50 +39,25 @@ def investigate_claims_spike(file_path: str) -> str:
     max_spike_idx = monthly_trend['Dollar_Change'].abs().idxmax()
 
     spike_month = monthly_trend.loc[max_spike_idx, 'YearMonth']
-    spike_amt = monthly_trend.loc[max_spike_idx, 'Billed_Amt']
     dollar_swing = monthly_trend.loc[max_spike_idx, 'Dollar_Change']
     prev_amt = monthly_trend.loc[max_spike_idx - 1, 'Billed_Amt']
-
+    
     spike_pct = (dollar_swing / prev_amt) * 100 if prev_amt != 0 else 0
     direction = "growth" if dollar_swing > 0 else "decline"
-    sign = "+" if dollar_swing > 0 else ""
 
+    # Identify drivers for the text summary
     spike_data = df_temp[df_temp['YearMonth'] == spike_month]
     drivers = spike_data.groupby(['Type', 'Region'])['Billed_Amt'].sum().reset_index().sort_values('Billed_Amt', ascending=False)
     top_driver_type = drivers.iloc[0]['Type']
     top_driver_region = drivers.iloc[0]['Region']
     top_driver_amt = drivers.iloc[0]['Billed_Amt']
 
-    stacked_trend = df_temp.groupby(['YearMonth', 'Region'])['Billed_Amt'].sum().reset_index().sort_values('YearMonth')
-    stacked_trend['Plot_Date'] = stacked_trend['YearMonth'].dt.to_timestamp()
-    spike_month_ts = spike_month.to_timestamp()
-
-    fig = px.bar(
-        stacked_trend, x='Plot_Date', y='Billed_Amt', color='Region', barmode='stack',
-        title=f"Anomaly: Monthly Billed Amount Trend ({file_path})",
-        labels={'Billed_Amt': 'Total Change in Billed Amount ($)', 'Plot_Date': 'Month'}
-    )
-
-    fig.update_xaxes(dtick="M1", tickformat="%b", tickangle=0)
-
-    fig.add_trace(go.Scatter(
-        x=[spike_month_ts], y=[spike_amt], mode='markers',
-        marker=dict(size=35, symbol='circle-open', color='red', line=dict(width=4)),
-        showlegend=False, hoverinfo='skip'
-    ))
-
-    fig.add_annotation(
-        x=spike_month_ts, y=spike_amt,
-        text=f"Major Anomaly: {sign}${abs(dollar_swing):,.0f} ({sign}{spike_pct:.1f}%)<br>Driver: {top_driver_type} ({top_driver_region})",
-        showarrow=True, arrowhead=2, arrowcolor="red", font=dict(color="red", size=12), ay=-50
-    )
-
-    #display(go.FigureWidget(fig))
+    # CRITICAL: We removed the plotting code here because 
+    # Gradio handles visualization in the app.py main interface.
 
     return (f"The most significant change occurred in {str(spike_month)} with a swing of ${abs(dollar_swing):,.2f} "
             f"({abs(spike_pct):.1f}% {direction}). The primary driver was '{top_driver_type}' claims in the "
             f"'{top_driver_region}' region (${top_driver_amt:,.2f}).")
-
 
 # ---------------------------------------------------------
 # TOOL 2: MoM Percentage Point Driver Decomposition
