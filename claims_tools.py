@@ -22,17 +22,17 @@ def investigate_claims_spike(file_path: str) -> str:
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-# --- The truly bulletproof date fix ---
-    num_vals = pd.to_numeric(df_temp['Service_Date'], errors='coerce')
-    is_excel_date = num_vals.notna() & (num_vals < 100000)
+# --- STRICT MM/DD/YYYY DATE FIX ---
+    date_strs = df['Service_Date'].astype(str).str.strip()
     
-    parsed_numeric = pd.to_datetime(num_vals[is_excel_date], unit='D', origin='1899-12-30', errors='coerce')
-    parsed_strings = pd.to_datetime(df_temp['Service_Date'], errors='coerce')
+    # 1. Try strict MM/DD/YYYY
+    df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
     
-    df_temp['Date'] = parsed_strings
-    df_temp.loc[is_excel_date, 'Date'] = parsed_numeric
-    df_temp = df_temp.dropna(subset=['Date'])
-
+    # 2. Fallback in case Excel auto-formatted any to YYYY-MM-DD in the background
+    df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d', errors='coerce'))
+    df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d %H:%M:%S', errors='coerce'))
+    
+    df = df.dropna(subset=['Date'])
     df_temp['YearMonth'] = df_temp['Date'].dt.to_period('M')
 
     # Anomaly Detection Logic
@@ -81,16 +81,17 @@ def analyze_incremental_paid_claims(file_path: str) -> str:
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-# --- The truly bulletproof date fix ---
-    num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
-    is_excel_date = num_vals.notna() & (num_vals < 100000)
+# --- STRICT MM/DD/YYYY DATE FIX ---
+    date_strs = df_temp['Service_Date'].astype(str).str.strip()
     
-    parsed_numeric = pd.to_datetime(num_vals[is_excel_date], unit='D', origin='1899-12-30', errors='coerce')
-    parsed_strings = pd.to_datetime(df['Service_Date'], errors='coerce')
+    # 1. Try strict MM/DD/YYYY
+    df_temp['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
     
-    df['Date'] = parsed_strings
-    df.loc[is_excel_date, 'Date'] = parsed_numeric
-    df = df.dropna(subset=['Date'])
+    # 2. Fallback in case Excel auto-formatted any to YYYY-MM-DD in the background
+    df_temp['Date'] = df_temp['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d', errors='coerce'))
+    df_temp['Date'] = df_temp['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d %H:%M:%S', errors='coerce'))
+    
+    df_temp = df_temp.dropna(subset=['Date'])
 
     df['YearMonth'] = df['Date'].dt.to_period('M').astype(str)
     unique_months = sorted(df['YearMonth'].unique())
