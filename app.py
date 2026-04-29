@@ -63,20 +63,17 @@ def plot_baseline(file_obj):
             )
         df['Billed_Amt'] = df['Billed_Amt'].fillna(0)
 
-        # --- THE BULLETPROOF DATE FIX ---
-        # 1. Parse anything numeric using Excel's 1899 origin
-        parsed_numeric = pd.to_datetime(
-            pd.to_numeric(df['Service_Date'], errors='coerce'), 
-            unit='D', origin='1899-12-30'
-        )
-        # 2. Parse standard strings
+# --- THE TRULY BULLETPROOF DATE FIX ---
+        num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
+        # Only treat as an Excel serial date if it's a realistic number (e.g., < 100000)
+        is_excel_date = num_vals.notna() & (num_vals < 100000)
+        
+        parsed_numeric = pd.to_datetime(num_vals[is_excel_date], unit='D', origin='1899-12-30', errors='coerce')
         parsed_strings = pd.to_datetime(df['Service_Date'], errors='coerce')
         
-        # 3. Combine them: Find which rows were actually numeric and swap them in
-        is_numeric = pd.to_numeric(df['Service_Date'], errors='coerce').notna()
         df['Date'] = parsed_strings
-        df.loc[is_numeric, 'Date'] = parsed_numeric[is_numeric]
-        # ---------------------------------
+        df.loc[is_excel_date, 'Date'] = parsed_numeric
+        # --------------------------------------
 
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
