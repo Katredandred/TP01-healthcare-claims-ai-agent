@@ -22,12 +22,14 @@ def investigate_claims_spike(file_path: str) -> str:
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-    # Date parsing logic (kept from your original)
-    if pd.api.types.is_numeric_dtype(df_temp['Service_Date']):
-        df_temp['Date'] = pd.to_datetime(df_temp['Service_Date'], unit='D', origin='1899-12-30')
-    else:
-        df_temp['Date'] = pd.to_datetime(df_temp['Service_Date'], format='%m/%d/%Y', errors='coerce')
-        df_temp['Date'] = df_temp['Date'].fillna(pd.to_datetime(df_temp['Service_Date'], errors='coerce'))
+# --- Bulletproof Date Fix ---
+    parsed_numeric = pd.to_datetime(pd.to_numeric(df_temp['Service_Date'], errors='coerce'), unit='D', origin='1899-12-30')
+    parsed_strings = pd.to_datetime(df_temp['Service_Date'], errors='coerce')
+    is_numeric = pd.to_numeric(df_temp['Service_Date'], errors='coerce').notna()
+    
+    df_temp['Date'] = parsed_strings
+    df_temp.loc[is_numeric, 'Date'] = parsed_numeric[is_numeric]
+    df_temp = df_temp.dropna(subset=['Date'])
 
     df_temp['YearMonth'] = df_temp['Date'].dt.to_period('M')
 
@@ -77,11 +79,14 @@ def analyze_incremental_paid_claims(file_path: str) -> str:
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-    if pd.api.types.is_numeric_dtype(df['Service_Date']):
-        df['Date'] = pd.to_datetime(df['Service_Date'], unit='D', origin='1899-12-30')
-    else:
-        df['Date'] = pd.to_datetime(df['Service_Date'], format='%m/%d/%Y', errors='coerce')
-        df['Date'] = df['Date'].fillna(pd.to_datetime(df['Service_Date'], errors='coerce'))
+# --- Bulletproof Date Fix ---
+    parsed_numeric = pd.to_datetime(pd.to_numeric(df['Service_Date'], errors='coerce'), unit='D', origin='1899-12-30')
+    parsed_strings = pd.to_datetime(df['Service_Date'], errors='coerce')
+    is_numeric = pd.to_numeric(df['Service_Date'], errors='coerce').notna()
+    
+    df['Date'] = parsed_strings
+    df.loc[is_numeric, 'Date'] = parsed_numeric[is_numeric]
+    df = df.dropna(subset=['Date'])
 
     df['YearMonth'] = df['Date'].dt.to_period('M').astype(str)
     unique_months = sorted(df['YearMonth'].unique())
