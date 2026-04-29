@@ -23,7 +23,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 
 # ------------------------------------------------------------------
-# API key — set GEMINI_API_KEY as a Hugging Face Space secret
+# API key setup
 # ------------------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -49,13 +49,13 @@ def plot_baseline(file_obj):
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims     = pd.read_excel(file_path, sheet_name='fake claims')
         
-        # Clean IDs and perform LEFT merge
+        # 1. Clean IDs and perform LEFT merge
         enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
         claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
         df = pd.merge(claims, enrollment, on='Member_ID', how='left')
         df['Region'] = df['Region'].fillna('Unknown Region')
 
-        # Clean Billed_Amt
+        # 2. Clean Billed_Amt
         if df['Billed_Amt'].dtype == 'object':
             df['Billed_Amt'] = pd.to_numeric(
                 df['Billed_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
@@ -63,19 +63,28 @@ def plot_baseline(file_obj):
             )
         df['Billed_Amt'] = df['Billed_Amt'].fillna(0)
 
-# --- STRICT MM/DD/YYYY DATE FIX ---
-        date_strs = df['Service_Date'].astype(str).str.strip()
-        
-        # 1. Try strict MM/DD/YYYY
-        df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-        
-        # 2. Fallback in case Excel auto-formatted any to YYYY-MM-DD in the background
-        df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d', errors='coerce'))
-        df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d %H:%M:%S', errors='coerce'))
-        
+        # 3. Robust Date Parsing
+        if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
+            df['Date'] = df['Service_Date']
+        else:
+            date_strs = df['Service_Date'].astype(str).str.strip()
+            # Try strict MM/DD/YYYY first
+            df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
+            # Fallback for general strings
+            df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
+            
+            # Fallback for Excel serial numbers
+            num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
+            is_excel_date = num_vals.notna() & (num_vals < 100000)
+            if is_excel_date.any():
+                df.loc[is_excel_date, 'Date'] = pd.to_datetime(
+                    num_vals[is_excel_date], unit='D', origin='1899-12-30'
+                )
+
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
+        # 4. Group and Plot
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Billed_Amt']
             .sum().reset_index().sort_values('YearMonth')
@@ -87,6 +96,9 @@ def plot_baseline(file_obj):
             title=f"Absolute Monthly Billed Trend — {os.path.basename(file_path)}",
             labels={'Billed_Amt': 'Absolute Billed Amount ($)', 'Plot_Date': 'Month'}
         )
+        
+        # 5. Format Axes
+        fig.update_layout(yaxis_tickformat=",.0f")  # Forces absolute numbers with commas
         fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
 
         intro = [("", "📊 File loaded successfully! Here is your true absolute billed trend.")]
@@ -213,7 +225,6 @@ with gr.Blocks(
         inputs=[chat_input, file_upload, chatbot],
         outputs=[chatbot, chat_input]
     )
-
 
 if __name__ == "__main__":
     demo.launch()
