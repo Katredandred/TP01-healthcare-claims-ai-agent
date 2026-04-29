@@ -36,86 +36,47 @@ tools          = [investigate_claims_spike, analyze_incremental_paid_claims]
 agent_executor = create_react_agent(model=llm, tools=tools)
 
 
-# ------------------------------------------------------------------
-# Helper: baseline plot
-# ------------------------------------------------------------------
-def plot_baseline(file_obj):
-    """Accept a Gradio file object and plot the aggregate paid trend."""
-    if file_obj is None:
-        return None, [("", "⚠️ Please upload an Excel claims file first.")]
-
-    file_path = file_obj.name
-    try:
-        enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
-        claims     = pd.read_excel(file_path, sheet_name='fake claims')
-        
-        # Merge
-        enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
-        claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
-        df = pd.merge(claims, enrollment, on='Member_ID', how='left')
-        df['Region'] = df['Region'].fillna('Unknown Region')
-
-        # Clean Paid_Amt
-        if df['Paid_Amt'].dtype == 'object':
-            df['Paid_Amt'] = pd.to_numeric(
-                df['Paid_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
-                errors='coerce'
-            )
-        df['Paid_Amt'] = df['Paid_Amt'].fillna(0)
-
-        # Robust Date Parsing (Counting how many rows we start with)
-        original_count = len(df)
-        
-        if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
-            df['Date'] = df['Service_Date']
-        else:
-            date_strs = df['Service_Date'].astype(str).str.strip()
-            df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-            df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
-            
-            num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
-            is_excel_date = num_vals.notna() & (num_vals < 100000)
-            if is_excel_date.any():
-                df.loc[is_excel_date, 'Date'] = pd.to_datetime(
-                    num_vals[is_excel_date], unit='D', origin='1899-12-30'
-                )
-
-        # Count how many dates failed to parse
-        missing_dates = df['Date'].isna().sum()
-        df = df.dropna(subset=['Date'])
-        df['YearMonth'] = df['Date'].dt.to_period('M')
-        
-    # Group and Plot AGGREGATE PAID AMOUNT
+# Group and Plot AGGREGATE PAID AMOUNT
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
         
-        # Convert explicitly to string so Plotly stops trying to guess time intervals
+        # Convert period to string (e.g., "Jan 2026")
         stacked['Plot_Date'] = stacked['YearMonth'].dt.strftime('%b %Y')
         unique_months = stacked['Plot_Date'].unique().tolist()
+
+        # --- THE SINGLE MONTH RENDER FIX ---
+        # If there is only 1 month, we must manually set a width so it isn't invisible
+        bar_width = 0.5 if len(unique_months) == 1 else None
 
         fig = px.bar(
             stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
             title=f"Aggregate Monthly Paid Claims — {os.path.basename(file_path)}",
-            labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'}
+            labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'},
+            width=None # Let it autosize to the container
         )
         
-        # --- THE MAGIC BULLET: AXIS PADDING ---
-        fig.update_layout(yaxis_tickformat=",.0f")
+        if bar_width:
+            fig.update_traces(width=bar_width)
+
+        # Force categorical axis and add padding "gutters" on the left and right
+        fig.update_layout(
+            yaxis_tickformat=",.0f",
+            margin=dict(l=60, r=60, t=50, b=50),
+            xaxis_type='category'
+        )
+        
         fig.update_xaxes(
-            type='category', 
             categoryorder='array', 
             categoryarray=unique_months, 
             tickangle=-30,
-            range=[-0.5, len(unique_months) - 0.5]  # Forces padding so Jan isn't cut off!
+            # Range -0.5 to 0.5 ensures a single bar sits right in the middle
+            range=[-0.5, len(unique_months) - 0.5] 
         )
 
-        intro = [("", "📊 File loaded successfully! Here is your aggregate paid claims trend.")]
+        intro = [("", f"📊 Data loaded! I see {len(unique_months)} month(s) of data.")]
         return fig, intro
-
-    except Exception as e:
-        return None, [("", f"❌ Error loading file: {e}")]
 # ------------------------------------------------------------------
 # Helper: chat with agent
 # ------------------------------------------------------------------
