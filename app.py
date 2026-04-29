@@ -39,10 +39,8 @@ agent_executor = create_react_agent(model=llm, tools=tools)
 # ------------------------------------------------------------------
 # Helper: baseline plot
 # ------------------------------------------------------------------
-# ------------------------------------------------------------------
-# Helper: baseline plot
-# ------------------------------------------------------------------
 def plot_baseline(file_obj):
+    """Accept a Gradio file object and plot the absolute billed trend."""
     if file_obj is None:
         return None, [("", "⚠️ Please upload an Excel claims file first.")]
 
@@ -51,33 +49,44 @@ def plot_baseline(file_obj):
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims     = pd.read_excel(file_path, sheet_name='fake claims')
         
-        # 1. Strip spaces just in case, to ensure IDs match perfectly
+        # Clean IDs and perform LEFT merge
         enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
         claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
-
-        # 2. LEFT MERGE: Keep all claims, even if demographic data is missing
         df = pd.merge(claims, enrollment, on='Member_ID', how='left')
-
-        # 3. CRITICAL FIX: Fill missing regions so Pandas doesn't drop them in the groupby
         df['Region'] = df['Region'].fillna('Unknown Region')
 
-        # 4. Parse Dates
-        if pd.api.types.is_numeric_dtype(df['Service_Date']):
-            df['Date'] = pd.to_datetime(df['Service_Date'], unit='D', origin='1899-12-30')
-        else:
-            df['Date'] = pd.to_datetime(df['Service_Date'], format='%m/%d/%Y', errors='coerce')
-            df['Date'] = df['Date'].fillna(pd.to_datetime(df['Service_Date'], errors='coerce'))
+        # Clean Billed_Amt
+        if df['Billed_Amt'].dtype == 'object':
+            df['Billed_Amt'] = pd.to_numeric(
+                df['Billed_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
+                errors='coerce'
+            )
+        df['Billed_Amt'] = df['Billed_Amt'].fillna(0)
 
+        # --- THE BULLETPROOF DATE FIX ---
+        # 1. Parse anything numeric using Excel's 1899 origin
+        parsed_numeric = pd.to_datetime(
+            pd.to_numeric(df['Service_Date'], errors='coerce'), 
+            unit='D', origin='1899-12-30'
+        )
+        # 2. Parse standard strings
+        parsed_strings = pd.to_datetime(df['Service_Date'], errors='coerce')
+        
+        # 3. Combine them: Find which rows were actually numeric and swap them in
+        is_numeric = pd.to_numeric(df['Service_Date'], errors='coerce').notna()
+        df['Date'] = parsed_strings
+        df.loc[is_numeric, 'Date'] = parsed_numeric[is_numeric]
+        # ---------------------------------
+
+        df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
-        # 5. Group by Billed_Amt to get the absolute totals
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Billed_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
         stacked['Plot_Date'] = stacked['YearMonth'].dt.to_timestamp()
 
-        # Render the chart
         fig = px.bar(
             stacked, x='Plot_Date', y='Billed_Amt', color='Region', barmode='stack',
             title=f"Absolute Monthly Billed Trend — {os.path.basename(file_path)}",
@@ -85,12 +94,7 @@ def plot_baseline(file_obj):
         )
         fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
 
-        intro = [(
-            "",
-            "📊 File loaded successfully! Here is your true absolute billed trend.\n\n"
-            "You can now ask me to investigate anomalies, decompose month-over-month drivers, "
-            "or summarize any patterns you see."
-        )]
+        intro = [("", "📊 File loaded successfully! Here is your true absolute billed trend.")]
         return fig, intro
 
     except Exception as e:
