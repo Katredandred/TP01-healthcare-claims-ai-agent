@@ -36,6 +36,9 @@ tools          = [investigate_claims_spike, analyze_incremental_paid_claims]
 agent_executor = create_react_agent(model=llm, tools=tools)
 
 
+# ------------------------------------------------------------------
+# Helper: baseline plot
+# ------------------------------------------------------------------
 def plot_baseline(file_obj):
     """
     Accepts a Gradio file object, parses healthcare claims data, 
@@ -65,7 +68,6 @@ def plot_baseline(file_obj):
         df['Paid_Amt'] = df['Paid_Amt'].fillna(0)
 
         # 4. Robust Date Parsing Logic
-        original_count = len(df)
         if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
             df['Date'] = df['Service_Date']
         else:
@@ -84,17 +86,10 @@ def plot_baseline(file_obj):
                 )
 
         # 5. Filter and Prepare for Plotting
-        missing_dates = df['Date'].isna().sum()
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
-        # 6. Build Diagnostic Report for the Chat Window
-        month_counts = df['YearMonth'].value_counts().sort_index()
-        diag_text = f"📊 **Diagnostic Report:**\nTotal rows: {original_count} | Dropped dates: {missing_dates}\n\n**Claims found per month:**\n"
-        for ym, count in month_counts.items():
-            diag_text += f"- {ym.strftime('%b %Y')}: {count} claims\n"
-        
-        # 7. Grouping and Categorical Formatting
+        # 6. Grouping and Categorical Formatting
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
@@ -107,7 +102,7 @@ def plot_baseline(file_obj):
         # Handle bar width for single-month display
         bar_width = 0.5 if len(unique_months) == 1 else None
 
-        # 8. Create the Plotly Figure
+        # 7. Create the Plotly Figure
         fig = px.bar(
             stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
             title=f"Aggregate Monthly Paid Claims — {os.path.basename(file_path)}",
@@ -117,7 +112,7 @@ def plot_baseline(file_obj):
         if bar_width:
             fig.update_traces(width=bar_width)
 
-        # 9. Axis Padding and Layout Fixes
+        # 8. Axis Padding and Layout Fixes
         fig.update_layout(
             yaxis_tickformat=",.0f",
             margin=dict(l=60, r=40, t=50, b=50),
@@ -132,10 +127,12 @@ def plot_baseline(file_obj):
             range=[-0.7, len(unique_months) - 0.3] 
         )
 
-        return fig, [("", diag_text)]
+        success_msg = [("", "✅ **File processed successfully.** The aggregate paid claims trend is displayed below.")]
+        return fig, success_msg
 
     except Exception as e:
         return None, [("", f"❌ Error loading file: {e}")]
+
 # ------------------------------------------------------------------
 # Helper: chat with agent
 # ------------------------------------------------------------------
@@ -184,13 +181,12 @@ with gr.Blocks(
 
     gr.Markdown("""
     # 🏥 Healthcare Claims AI Agent
-    **TP01 — Optimized** | LangChain · LangGraph · Google Gemini 2.5 Flash · Gradio
+    **TP01 — Production Ready** | LangChain · LangGraph · Google Gemini 2.5 Flash · Gradio
 
     Upload your Excel claims file to get started. The agent will plot your baseline trend
     and answer natural language questions about anomalies and month-over-month drivers.
 
-    > **Required:** Excel file with sheets named `fake enrollment` and `fake claims`,
-    > both containing a `Member_ID` column.
+    > **Required Format:** Excel file with sheets `fake enrollment` and `fake claims`.
     """)
 
     gr.Markdown("---")
@@ -205,7 +201,7 @@ with gr.Blocks(
         )
         plot_btn = gr.Button("📊 Plot Baseline Trend", variant="primary", scale=1)
 
-    chart_output = gr.Plot(label="Baseline Monthly Billed Trend")
+    chart_output = gr.Plot(label="Aggregate Monthly Paid Trend")
 
     gr.Markdown("---")
 
@@ -214,7 +210,7 @@ with gr.Blocks(
 
     chatbot = gr.Chatbot(
         label="Conversation",
-        height=380,
+        height=450,
         bubble_full_width=False,
         show_label=False
     )
