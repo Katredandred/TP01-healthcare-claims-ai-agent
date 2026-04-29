@@ -17,7 +17,8 @@ def investigate_claims_spike(file_path: str) -> str:
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims = pd.read_excel(file_path, sheet_name='fake claims')
-        df_temp = pd.merge(claims, enrollment, on='Member_ID', how='inner')
+        df_temp = pd.merge(claims, enrollment, on='Member_ID', how='left')
+        df_temp['Region'] = df_temp['Region'].fillna('Unknown Region')
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
@@ -71,7 +72,8 @@ def analyze_incremental_paid_claims(file_path: str) -> str:
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims = pd.read_excel(file_path, sheet_name='fake claims')
-        df = pd.merge(claims, enrollment, on='Member_ID', how='inner')
+        df = pd.merge(claims, enrollment, on='Member_ID', how='left')
+        df['Region'] = df['Region'].fillna('Unknown Region')
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
