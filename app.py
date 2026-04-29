@@ -81,12 +81,16 @@ def plot_baseline(file_obj):
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
+        
         # Group and Plot AGGREGATE PAID AMOUNT
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
-        stacked['Plot_Date'] = stacked['YearMonth'].dt.to_timestamp()
+        
+        # --- THE PLOTLY CATEGORICAL AXIS FIX ---
+        # Convert the period directly to a formatted string (e.g., "Jan 2026")
+        stacked['Plot_Date'] = stacked['YearMonth'].dt.strftime('%b %Y')
 
         fig = px.bar(
             stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
@@ -94,15 +98,20 @@ def plot_baseline(file_obj):
             labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'}
         )
         
+        # Force Plotly to treat the x-axis as discrete categories, preventing edge-clipping
         fig.update_layout(yaxis_tickformat=",.0f")
-        fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
+        fig.update_xaxes(
+            type='category', 
+            categoryorder='array', 
+            categoryarray=stacked['Plot_Date'].unique(), 
+            tickangle=-30
+        )
 
         intro = [("", "📊 File loaded successfully! Here is your aggregate paid claims trend.")]
         return fig, intro
 
     except Exception as e:
         return None, [("", f"❌ Error loading file: {e}")]
-
 # ------------------------------------------------------------------
 # Helper: chat with agent
 # ------------------------------------------------------------------
