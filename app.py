@@ -55,7 +55,7 @@ def plot_baseline(file_obj):
         df = pd.merge(claims, enrollment, on='Member_ID', how='left')
         df['Region'] = df['Region'].fillna('Unknown Region')
 
-        # Clean Paid_Amt for the aggregate plot
+        # Clean Paid_Amt
         if df['Paid_Amt'].dtype == 'object':
             df['Paid_Amt'] = pd.to_numeric(
                 df['Paid_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
@@ -63,7 +63,9 @@ def plot_baseline(file_obj):
             )
         df['Paid_Amt'] = df['Paid_Amt'].fillna(0)
 
-        # Robust Date Parsing
+        # Robust Date Parsing (Counting how many rows we start with)
+        original_count = len(df)
+        
         if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
             df['Date'] = df['Service_Date']
         else:
@@ -78,19 +80,26 @@ def plot_baseline(file_obj):
                     num_vals[is_excel_date], unit='D', origin='1899-12-30'
                 )
 
+        # Count how many dates failed to parse
+        missing_dates = df['Date'].isna().sum()
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
-        
         
         # Group and Plot AGGREGATE PAID AMOUNT
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
-        
-        # --- THE PLOTLY CATEGORICAL AXIS FIX ---
-        # Convert the period directly to a formatted string (e.g., "Jan 2026")
         stacked['Plot_Date'] = stacked['YearMonth'].dt.strftime('%b %Y')
+
+        # --- THE X-RAY DIAGNOSTIC MESSAGE ---
+        month_counts = df['YearMonth'].value_counts().sort_index()
+        diag_text = f"📊 **Diagnostic Report:**\nTotal rows in file: {original_count}\nRows dropped due to unreadable dates: {missing_dates}\n\n**Claims counted per month:**\n"
+        for ym, count in month_counts.items():
+            diag_text += f"- {ym.strftime('%b %Y')}: {count} claims\n"
+            
+        diag_text += "\nIf January has claims above but is missing from the chart, it is a Plotly rendering bug."
+        # ------------------------------------
 
         fig = px.bar(
             stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
@@ -98,7 +107,6 @@ def plot_baseline(file_obj):
             labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'}
         )
         
-        # Force Plotly to treat the x-axis as discrete categories, preventing edge-clipping
         fig.update_layout(yaxis_tickformat=",.0f")
         fig.update_xaxes(
             type='category', 
@@ -107,7 +115,7 @@ def plot_baseline(file_obj):
             tickangle=-30
         )
 
-        intro = [("", "📊 File loaded successfully! Here is your aggregate paid claims trend.")]
+        intro = [("", diag_text)]
         return fig, intro
 
     except Exception as e:
