@@ -58,7 +58,7 @@ def investigate_claims_spike(file_path: str) -> str:
     fig = px.bar(
         stacked_trend, x='Plot_Date', y='Billed_Amt', color='Region', barmode='stack',
         title=f"Anomaly: Monthly Billed Amount Trend ({file_path})",
-        labels={'Billed_Amt': 'Total Billed Amount ($)', 'Plot_Date': 'Month'}
+        labels={'Billed_Amt': 'Total Change in Billed Amount ($)', 'Plot_Date': 'Month'}
     )
 
     fig.update_xaxes(dtick="M1", tickformat="%b", tickangle=0)
