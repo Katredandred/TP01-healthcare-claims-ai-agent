@@ -1,144 +1,226 @@
+"""
+Healthcare Claims AI Agent — Gradio Web App
+===========================================
+Run locally:  python app.py
+Deploy to:    Hugging Face Spaces (set GEMINI_API_KEY in Space secrets)
+"""
+
+import os
+import importlib
 import pandas as pd
-from langchain.tools import tool
+import plotly.express as px
+import plotly.graph_objects as go
+import gradio as gr
 
-# ---------------------------------------------------------
-# TOOL 1: The Stacked Bar Anomaly Investigator
-# ---------------------------------------------------------
-@tool
-def investigate_claims_spike(file_path: str) -> str:
-    """
-    Analyzes hospital claims data from an Excel file to find the most significant month-over-month
-    dollar change in BILLED amounts, identifies drivers, and identifies the anomaly.
-    """
+# ------------------------------------------------------------------
+# Load agent tools
+# ------------------------------------------------------------------
+import claims_tools
+importlib.reload(claims_tools)
+from claims_tools import investigate_claims_spike, analyze_incremental_paid_claims
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.prebuilt import create_react_agent
+
+# ------------------------------------------------------------------
+# API key setup
+# ------------------------------------------------------------------
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise EnvironmentError("GEMINI_API_KEY not found in environment secrets.")
+
+os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
+
+llm            = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+tools          = [investigate_claims_spike, analyze_incremental_paid_claims]
+agent_executor = create_react_agent(model=llm, tools=tools)
+
+
+# ------------------------------------------------------------------
+# Helper: baseline plot
+# ------------------------------------------------------------------
+def plot_baseline(file_obj):
+    """Accept a Gradio file object and plot the aggregate paid trend."""
+    if file_obj is None:
+        return None, [("", "⚠️ Please upload an Excel claims file first.")]
+
+    file_path = file_obj.name
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
-        claims = pd.read_excel(file_path, sheet_name='fake claims')
+        claims     = pd.read_excel(file_path, sheet_name='fake claims')
         
-        # Clean IDs and perform LEFT merge
-        enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
-        claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
-        df_temp = pd.merge(claims, enrollment, on='Member_ID', how='left')
-        df_temp['Region'] = df_temp['Region'].fillna('Unknown Region')
-    except Exception as e:
-        return f"Error loading file: {str(e)}"
-
-    # Robust Date Parsing
-    if pd.api.types.is_datetime64_any_dtype(df_temp['Service_Date']):
-        df_temp['Date'] = df_temp['Service_Date']
-    else:
-        date_strs = df_temp['Service_Date'].astype(str).str.strip()
-        df_temp['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-        df_temp['Date'] = df_temp['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
-        
-        num_vals = pd.to_numeric(df_temp['Service_Date'], errors='coerce')
-        is_excel_date = num_vals.notna() & (num_vals < 100000)
-        if is_excel_date.any():
-            df_temp.loc[is_excel_date, 'Date'] = pd.to_datetime(
-                num_vals[is_excel_date], unit='D', origin='1899-12-30'
-            )
-            
-    df_temp = df_temp.dropna(subset=['Date'])
-    df_temp['YearMonth'] = df_temp['Date'].dt.to_period('M')
-
-    # Anomaly Detection Logic
-    monthly_trend = df_temp.groupby('YearMonth')['Billed_Amt'].sum().reset_index().sort_values('YearMonth')
-    if len(monthly_trend) < 2:
-        return "Not enough monthly data."
-
-    monthly_trend['Dollar_Change'] = monthly_trend['Billed_Amt'].diff()
-    max_spike_idx = monthly_trend['Dollar_Change'].abs().idxmax()
-
-    spike_month = monthly_trend.loc[max_spike_idx, 'YearMonth']
-    dollar_swing = monthly_trend.loc[max_spike_idx, 'Dollar_Change']
-    prev_amt = monthly_trend.loc[max_spike_idx - 1, 'Billed_Amt']
-    
-    spike_pct = (dollar_swing / prev_amt) * 100 if prev_amt != 0 else 0
-    direction = "growth" if dollar_swing > 0 else "decline"
-
-    # Identify drivers for the text summary
-    spike_data = df_temp[df_temp['YearMonth'] == spike_month]
-    drivers = spike_data.groupby(['Type', 'Region'])['Billed_Amt'].sum().reset_index().sort_values('Billed_Amt', ascending=False)
-    top_driver_type = drivers.iloc[0]['Type']
-    top_driver_region = drivers.iloc[0]['Region']
-    top_driver_amt = drivers.iloc[0]['Billed_Amt']
-
-    return (f"The most significant change occurred in {str(spike_month)} with a swing of ${abs(dollar_swing):,.2f} "
-            f"({abs(spike_pct):.1f}% {direction}). The primary driver was '{top_driver_type}' claims in the "
-            f"'{top_driver_region}' region (${top_driver_amt:,.2f}).")
-
-
-# ---------------------------------------------------------
-# TOOL 2: MoM Percentage Point Driver Decomposition
-# ---------------------------------------------------------
-@tool
-def analyze_incremental_paid_claims(file_path: str) -> str:
-    """
-    Analyzes PAID claims month-over-month. It decomposes the drivers (Region and Type)
-    as percentage points of the total month-over-month percentage change.
-    """
-    try:
-        enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
-        claims = pd.read_excel(file_path, sheet_name='fake claims')
-        
-        # Clean IDs and perform LEFT merge
+        # Merge
         enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
         claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
         df = pd.merge(claims, enrollment, on='Member_ID', how='left')
         df['Region'] = df['Region'].fillna('Unknown Region')
-    except Exception as e:
-        return f"Error loading file: {str(e)}"
 
-    # Robust Date Parsing
-    if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
-        df['Date'] = df['Service_Date']
-    else:
-        date_strs = df['Service_Date'].astype(str).str.strip()
-        df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-        df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
-        
-        num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
-        is_excel_date = num_vals.notna() & (num_vals < 100000)
-        if is_excel_date.any():
-            df.loc[is_excel_date, 'Date'] = pd.to_datetime(
-                num_vals[is_excel_date], unit='D', origin='1899-12-30'
+        # Clean Paid_Amt for the aggregate plot
+        if df['Paid_Amt'].dtype == 'object':
+            df['Paid_Amt'] = pd.to_numeric(
+                df['Paid_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
+                errors='coerce'
             )
+        df['Paid_Amt'] = df['Paid_Amt'].fillna(0)
+
+        # Robust Date Parsing
+        if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
+            df['Date'] = df['Service_Date']
+        else:
+            date_strs = df['Service_Date'].astype(str).str.strip()
+            df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
+            df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
             
-    df = df.dropna(subset=['Date'])
-    df['YearMonth'] = df['Date'].dt.to_period('M').astype(str)
-    
-    unique_months = sorted(df['YearMonth'].unique())
+            num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
+            is_excel_date = num_vals.notna() & (num_vals < 100000)
+            if is_excel_date.any():
+                df.loc[is_excel_date, 'Date'] = pd.to_datetime(
+                    num_vals[is_excel_date], unit='D', origin='1899-12-30'
+                )
 
-    if len(unique_months) < 2:
-        return "Not enough data months available to compare periods."
+        df = df.dropna(subset=['Date'])
+        df['YearMonth'] = df['Date'].dt.to_period('M')
+        
+        # Group and Plot AGGREGATE PAID AMOUNT
+        stacked = (
+            df.groupby(['YearMonth', 'Region'])['Paid_Amt']
+            .sum().reset_index().sort_values('YearMonth')
+        )
+        stacked['Plot_Date'] = stacked['YearMonth'].dt.to_timestamp()
 
-    monthly_totals = df.groupby('YearMonth')['Paid_Amt'].sum()
-    pivot_df = df.pivot_table(index='YearMonth', columns=['Region', 'Type'], values='Paid_Amt', aggfunc='sum', fill_value=0)
-    diff_df = pivot_df.diff()
-    prev_totals = monthly_totals.shift(1)
+        fig = px.bar(
+            stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
+            title=f"Aggregate Monthly Paid Claims — {os.path.basename(file_path)}",
+            labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'}
+        )
+        
+        fig.update_layout(yaxis_tickformat=",.0f")
+        fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
 
-    pct_pt_df = diff_df.div(prev_totals, axis=0) * 100
-    pct_pt_df = pct_pt_df.dropna()
+        intro = [("", "📊 File loaded successfully! Here is your aggregate paid claims trend.")]
+        return fig, intro
 
-    plot_df = pct_pt_df.stack(['Region', 'Type']).reset_index(name='Pct_Pt_Contribution')
-    
-    target_month = pct_pt_df.index[-1]
-    prev_month = unique_months[unique_months.index(target_month) - 1]
+    except Exception as e:
+        return None, [("", f"❌ Error loading file: {e}")]
 
-    total_curr = monthly_totals[target_month]
-    total_prev = monthly_totals[prev_month]
-    mom_pct = ((total_curr - total_prev) / total_prev) * 100 if total_prev else 0
+# ------------------------------------------------------------------
+# Helper: chat with agent
+# ------------------------------------------------------------------
+def chat_with_agent(message, file_obj, history):
+    if not message.strip():
+        return history, ""
 
-    month_data = plot_df[plot_df['YearMonth'] == target_month].copy()
-    month_data['Abs_Contribution'] = month_data['Pct_Pt_Contribution'].abs()
-    top_driver_row = month_data.sort_values('Abs_Contribution', ascending=False).iloc[0]
+    if file_obj is None:
+        history = history or []
+        history.append((message, "⚠️ Please upload an Excel claims file before asking questions."))
+        return history, ""
 
-    driver_reg = top_driver_row['Region']
-    driver_typ = top_driver_row['Type']
-    driver_pp = top_driver_row['Pct_Pt_Contribution']
+    file_path = file_obj.name
+    system_prompt = (
+        "You are a precise healthcare claims analytics assistant. "
+        "Use your tools to investigate data files when asked. "
+        "Respond concisely and in plain English."
+    )
+    full_prompt = (
+        f"{system_prompt}\n\n"
+        f"[File: '{file_path}']\n"
+        f"User: {message}"
+    )
+    try:
+        response = agent_executor.invoke({"messages": [("user", full_prompt)]})
+        raw      = response['messages'][-1].content
+        reply    = (
+            " ".join(item.get('text', '') for item in raw if isinstance(item, dict)).strip()
+            if isinstance(raw, list) else str(raw).strip()
+        )
+    except Exception as e:
+        reply = f"❌ Error: {e}"
 
-    direction = "increase" if mom_pct > 0 else "decrease"
+    history = history or []
+    history.append((message, reply))
+    return history, ""
 
-    return (f"In the most recent month ({str(target_month)}), total paid claims were ${total_curr:,.2f}, "
-            f"which is a {abs(mom_pct):.1f}% {direction} from {str(prev_month)}. "
-            f"The primary driver was '{driver_typ}' claims in the '{driver_reg}' region, "
-            f"contributing {driver_pp:+.1f} percentage points to the overall {mom_pct:+.1f}% MoM change.")
+
+# ------------------------------------------------------------------
+# Gradio UI
+# ------------------------------------------------------------------
+with gr.Blocks(
+    title="🏥 Healthcare Claims AI Agent",
+    theme=gr.themes.Soft(primary_hue="blue")
+) as demo:
+
+    gr.Markdown("""
+    # 🏥 Healthcare Claims AI Agent
+    **TP01 — Optimized** | LangChain · LangGraph · Google Gemini 2.5 Flash · Gradio
+
+    Upload your Excel claims file to get started. The agent will plot your baseline trend
+    and answer natural language questions about anomalies and month-over-month drivers.
+
+    > **Required:** Excel file with sheets named `fake enrollment` and `fake claims`,
+    > both containing a `Member_ID` column.
+    """)
+
+    gr.Markdown("---")
+
+    # ── Step 1: File upload ──────────────────────────────────
+    gr.Markdown("### Step 1 — Upload Your Claims Data")
+    with gr.Row():
+        file_upload = gr.File(
+            label="📂 Upload Excel Claims File (.xls or .xlsx)",
+            file_types=[".xls", ".xlsx"],
+            scale=4
+        )
+        plot_btn = gr.Button("📊 Plot Baseline Trend", variant="primary", scale=1)
+
+    chart_output = gr.Plot(label="Baseline Monthly Billed Trend")
+
+    gr.Markdown("---")
+
+    # ── Step 2: Chat ─────────────────────────────────────────
+    gr.Markdown("### Step 2 — Chat with the AI Agent")
+
+    chatbot = gr.Chatbot(
+        label="Conversation",
+        height=380,
+        bubble_full_width=False,
+        show_label=False
+    )
+
+    with gr.Row():
+        chat_input = gr.Textbox(
+            label="",
+            placeholder="Ask a question about your claims data…",
+            scale=5
+        )
+        send_btn = gr.Button("Send ➤", variant="primary", scale=1)
+
+    gr.Examples(
+        examples=[
+            ["Investigate the month with the biggest claims spike."],
+            ["What drove the month-over-month change in paid claims?"],
+            ["Which region contributed most to the anomaly?"],
+            ["Summarize the overall claims trend for me."],
+        ],
+        inputs=chat_input,
+        label="💡 Example questions"
+    )
+
+    # ── Wire up events ────────────────────────────────────────
+    plot_btn.click(
+        fn=plot_baseline,
+        inputs=[file_upload],
+        outputs=[chart_output, chatbot]
+    )
+    send_btn.click(
+        fn=chat_with_agent,
+        inputs=[chat_input, file_upload, chatbot],
+        outputs=[chatbot, chat_input]
+    )
+    chat_input.submit(
+        fn=chat_with_agent,
+        inputs=[chat_input, file_upload, chatbot],
+        outputs=[chatbot, chat_input]
+    )
+
+if __name__ == "__main__":
+    demo.launch()
