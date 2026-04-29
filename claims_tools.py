@@ -1,9 +1,5 @@
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-#from IPython.display import display
 from langchain.tools import tool
-
 
 # ---------------------------------------------------------
 # TOOL 1: The Stacked Bar Anomaly Investigator
@@ -17,22 +13,31 @@ def investigate_claims_spike(file_path: str) -> str:
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims = pd.read_excel(file_path, sheet_name='fake claims')
+        
+        # Clean IDs and perform LEFT merge
+        enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
+        claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
         df_temp = pd.merge(claims, enrollment, on='Member_ID', how='left')
         df_temp['Region'] = df_temp['Region'].fillna('Unknown Region')
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-# --- STRICT MM/DD/YYYY DATE FIX ---
-    date_strs = df['Service_Date'].astype(str).str.strip()
-    
-    # 1. Try strict MM/DD/YYYY
-    df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-    
-    # 2. Fallback in case Excel auto-formatted any to YYYY-MM-DD in the background
-    df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d', errors='coerce'))
-    df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d %H:%M:%S', errors='coerce'))
-    
-    df = df.dropna(subset=['Date'])
+    # Robust Date Parsing
+    if pd.api.types.is_datetime64_any_dtype(df_temp['Service_Date']):
+        df_temp['Date'] = df_temp['Service_Date']
+    else:
+        date_strs = df_temp['Service_Date'].astype(str).str.strip()
+        df_temp['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
+        df_temp['Date'] = df_temp['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
+        
+        num_vals = pd.to_numeric(df_temp['Service_Date'], errors='coerce')
+        is_excel_date = num_vals.notna() & (num_vals < 100000)
+        if is_excel_date.any():
+            df_temp.loc[is_excel_date, 'Date'] = pd.to_datetime(
+                num_vals[is_excel_date], unit='D', origin='1899-12-30'
+            )
+            
+    df_temp = df_temp.dropna(subset=['Date'])
     df_temp['YearMonth'] = df_temp['Date'].dt.to_period('M')
 
     # Anomaly Detection Logic
@@ -57,12 +62,10 @@ def investigate_claims_spike(file_path: str) -> str:
     top_driver_region = drivers.iloc[0]['Region']
     top_driver_amt = drivers.iloc[0]['Billed_Amt']
 
-    # CRITICAL: We removed the plotting code here because 
-    # Gradio handles visualization in the app.py main interface.
-
     return (f"The most significant change occurred in {str(spike_month)} with a swing of ${abs(dollar_swing):,.2f} "
             f"({abs(spike_pct):.1f}% {direction}). The primary driver was '{top_driver_type}' claims in the "
             f"'{top_driver_region}' region (${top_driver_amt:,.2f}).")
+
 
 # ---------------------------------------------------------
 # TOOL 2: MoM Percentage Point Driver Decomposition
@@ -71,29 +74,38 @@ def investigate_claims_spike(file_path: str) -> str:
 def analyze_incremental_paid_claims(file_path: str) -> str:
     """
     Analyzes PAID claims month-over-month. It decomposes the drivers (Region and Type)
-    as percentage points of the total month-over-month percentage change and plots a chart.
+    as percentage points of the total month-over-month percentage change.
     """
     try:
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims = pd.read_excel(file_path, sheet_name='fake claims')
+        
+        # Clean IDs and perform LEFT merge
+        enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
+        claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
         df = pd.merge(claims, enrollment, on='Member_ID', how='left')
         df['Region'] = df['Region'].fillna('Unknown Region')
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-# --- STRICT MM/DD/YYYY DATE FIX ---
-    date_strs = df_temp['Service_Date'].astype(str).str.strip()
-    
-    # 1. Try strict MM/DD/YYYY
-    df_temp['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-    
-    # 2. Fallback in case Excel auto-formatted any to YYYY-MM-DD in the background
-    df_temp['Date'] = df_temp['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d', errors='coerce'))
-    df_temp['Date'] = df_temp['Date'].fillna(pd.to_datetime(date_strs, format='%Y-%m-%d %H:%M:%S', errors='coerce'))
-    
-    df_temp = df_temp.dropna(subset=['Date'])
-
+    # Robust Date Parsing
+    if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
+        df['Date'] = df['Service_Date']
+    else:
+        date_strs = df['Service_Date'].astype(str).str.strip()
+        df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
+        df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
+        
+        num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
+        is_excel_date = num_vals.notna() & (num_vals < 100000)
+        if is_excel_date.any():
+            df.loc[is_excel_date, 'Date'] = pd.to_datetime(
+                num_vals[is_excel_date], unit='D', origin='1899-12-30'
+            )
+            
+    df = df.dropna(subset=['Date'])
     df['YearMonth'] = df['Date'].dt.to_period('M').astype(str)
+    
     unique_months = sorted(df['YearMonth'].unique())
 
     if len(unique_months) < 2:
@@ -108,19 +120,7 @@ def analyze_incremental_paid_claims(file_path: str) -> str:
     pct_pt_df = pct_pt_df.dropna()
 
     plot_df = pct_pt_df.stack(['Region', 'Type']).reset_index(name='Pct_Pt_Contribution')
-    plot_df['Plot_Date'] = pd.to_datetime(plot_df['YearMonth'])
-
-    fig = px.bar(
-        plot_df, x='Plot_Date', y='Pct_Pt_Contribution', color='Region', facet_col='Type',
-        barmode='relative',
-        title=f"MoM Paid Claims: Percentage Point Drivers ({file_path})",
-        labels={'Pct_Pt_Contribution': 'Contribution to Total MoM Change (pp)', 'Plot_Date': 'Month'}
-    )
-
-    fig.update_xaxes(dtick="M1", tickformat="%b", tickangle=0)
-    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
-    #display(go.FigureWidget(fig))
-
+    
     target_month = pct_pt_df.index[-1]
     prev_month = unique_months[unique_months.index(target_month) - 1]
 
