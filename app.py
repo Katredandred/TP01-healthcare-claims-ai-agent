@@ -85,21 +85,15 @@ def plot_baseline(file_obj):
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
-        # Group and Plot AGGREGATE PAID AMOUNT
+# Group and Plot AGGREGATE PAID AMOUNT
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
+        
+        # Convert explicitly to string so Plotly stops trying to guess time intervals
         stacked['Plot_Date'] = stacked['YearMonth'].dt.strftime('%b %Y')
-
-        # --- THE X-RAY DIAGNOSTIC MESSAGE ---
-        month_counts = df['YearMonth'].value_counts().sort_index()
-        diag_text = f"📊 **Diagnostic Report:**\nTotal rows in file: {original_count}\nRows dropped due to unreadable dates: {missing_dates}\n\n**Claims counted per month:**\n"
-        for ym, count in month_counts.items():
-            diag_text += f"- {ym.strftime('%b %Y')}: {count} claims\n"
-            
-        diag_text += "\nIf January has claims above but is missing from the chart, it is a Plotly rendering bug."
-        # ------------------------------------
+        unique_months = stacked['Plot_Date'].unique().tolist()
 
         fig = px.bar(
             stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
@@ -107,15 +101,17 @@ def plot_baseline(file_obj):
             labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'}
         )
         
+        # --- THE MAGIC BULLET: AXIS PADDING ---
         fig.update_layout(yaxis_tickformat=",.0f")
         fig.update_xaxes(
             type='category', 
             categoryorder='array', 
-            categoryarray=stacked['Plot_Date'].unique(), 
-            tickangle=-30
+            categoryarray=unique_months, 
+            tickangle=-30,
+            range=[-0.5, len(unique_months) - 0.5]  # Forces padding so Jan isn't cut off!
         )
 
-        intro = [("", diag_text)]
+        intro = [("", "📊 File loaded successfully! Here is your aggregate paid claims trend.")]
         return fig, intro
 
     except Exception as e:
