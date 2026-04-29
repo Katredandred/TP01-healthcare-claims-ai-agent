@@ -22,13 +22,15 @@ def investigate_claims_spike(file_path: str) -> str:
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-# --- Bulletproof Date Fix ---
-    parsed_numeric = pd.to_datetime(pd.to_numeric(df_temp['Service_Date'], errors='coerce'), unit='D', origin='1899-12-30')
+# --- The truly bulletproof date fix ---
+    num_vals = pd.to_numeric(df_temp['Service_Date'], errors='coerce')
+    is_excel_date = num_vals.notna() & (num_vals < 100000)
+    
+    parsed_numeric = pd.to_datetime(num_vals[is_excel_date], unit='D', origin='1899-12-30', errors='coerce')
     parsed_strings = pd.to_datetime(df_temp['Service_Date'], errors='coerce')
-    is_numeric = pd.to_numeric(df_temp['Service_Date'], errors='coerce').notna()
     
     df_temp['Date'] = parsed_strings
-    df_temp.loc[is_numeric, 'Date'] = parsed_numeric[is_numeric]
+    df_temp.loc[is_excel_date, 'Date'] = parsed_numeric
     df_temp = df_temp.dropna(subset=['Date'])
 
     df_temp['YearMonth'] = df_temp['Date'].dt.to_period('M')
@@ -79,13 +81,15 @@ def analyze_incremental_paid_claims(file_path: str) -> str:
     except Exception as e:
         return f"Error loading file: {str(e)}"
 
-# --- Bulletproof Date Fix ---
-    parsed_numeric = pd.to_datetime(pd.to_numeric(df['Service_Date'], errors='coerce'), unit='D', origin='1899-12-30')
+# --- The truly bulletproof date fix ---
+    num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
+    is_excel_date = num_vals.notna() & (num_vals < 100000)
+    
+    parsed_numeric = pd.to_datetime(num_vals[is_excel_date], unit='D', origin='1899-12-30', errors='coerce')
     parsed_strings = pd.to_datetime(df['Service_Date'], errors='coerce')
-    is_numeric = pd.to_numeric(df['Service_Date'], errors='coerce').notna()
     
     df['Date'] = parsed_strings
-    df.loc[is_numeric, 'Date'] = parsed_numeric[is_numeric]
+    df.loc[is_excel_date, 'Date'] = parsed_numeric
     df = df.dropna(subset=['Date'])
 
     df['YearMonth'] = df['Date'].dt.to_period('M').astype(str)
