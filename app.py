@@ -40,26 +40,22 @@ agent_executor = create_react_agent(model=llm, tools=tools)
 # Helper: baseline plot
 # ------------------------------------------------------------------
 def plot_baseline(file_obj):
-    """
-    Accepts a Gradio file object, parses healthcare claims data, 
-    and returns a Plotly bar chart of aggregate paid claims.
-    """
+    """Accept a Gradio file object and plot the aggregate paid trend."""
     if file_obj is None:
         return None, [("", "⚠️ Please upload an Excel claims file first.")]
 
     file_path = file_obj.name
     try:
-        # 1. Load Data
         enrollment = pd.read_excel(file_path, sheet_name='fake enrollment')
         claims     = pd.read_excel(file_path, sheet_name='fake claims')
         
-        # 2. Clean IDs and perform LEFT merge
+        # Merge
         enrollment['Member_ID'] = enrollment['Member_ID'].astype(str).str.strip()
         claims['Member_ID'] = claims['Member_ID'].astype(str).str.strip()
         df = pd.merge(claims, enrollment, on='Member_ID', how='left')
         df['Region'] = df['Region'].fillna('Unknown Region')
 
-        # 3. Clean Paid_Amt (Standardizing currency/strings to floats)
+        # Clean Paid_Amt for the aggregate plot
         if df['Paid_Amt'].dtype == 'object':
             df['Paid_Amt'] = pd.to_numeric(
                 df['Paid_Amt'].astype(str).str.replace(r'[$,]', '', regex=True), 
@@ -67,17 +63,14 @@ def plot_baseline(file_obj):
             )
         df['Paid_Amt'] = df['Paid_Amt'].fillna(0)
 
-        # 4. Robust Date Parsing Logic
+        # Robust Date Parsing
         if pd.api.types.is_datetime64_any_dtype(df['Service_Date']):
             df['Date'] = df['Service_Date']
         else:
             date_strs = df['Service_Date'].astype(str).str.strip()
-            # Try strict MM/DD/YYYY first
             df['Date'] = pd.to_datetime(date_strs, format='%m/%d/%Y', errors='coerce')
-            # Fallback for other string formats
             df['Date'] = df['Date'].fillna(pd.to_datetime(date_strs, errors='coerce'))
             
-            # Fallback for Excel serial numbers (e.g., 45662)
             num_vals = pd.to_numeric(df['Service_Date'], errors='coerce')
             is_excel_date = num_vals.notna() & (num_vals < 100000)
             if is_excel_date.any():
@@ -85,50 +78,27 @@ def plot_baseline(file_obj):
                     num_vals[is_excel_date], unit='D', origin='1899-12-30'
                 )
 
-        # 5. Filter and Prepare for Plotting
         df = df.dropna(subset=['Date'])
         df['YearMonth'] = df['Date'].dt.to_period('M')
         
-        # 6. Grouping and Categorical Formatting
+        # Group and Plot AGGREGATE PAID AMOUNT
         stacked = (
             df.groupby(['YearMonth', 'Region'])['Paid_Amt']
             .sum().reset_index().sort_values('YearMonth')
         )
-        
-        # Convert to String to prevent Plotly from using a continuous timeline
-        stacked['Plot_Date'] = stacked['YearMonth'].dt.strftime('%b %Y')
-        unique_months = stacked['Plot_Date'].unique().tolist()
+        stacked['Plot_Date'] = stacked['YearMonth'].dt.to_timestamp()
 
-        # Handle bar width for single-month display
-        bar_width = 0.5 if len(unique_months) == 1 else None
-
-        # 7. Create the Plotly Figure
         fig = px.bar(
             stacked, x='Plot_Date', y='Paid_Amt', color='Region', barmode='stack',
             title=f"Aggregate Monthly Paid Claims — {os.path.basename(file_path)}",
             labels={'Paid_Amt': 'Aggregate Paid Amount ($)', 'Plot_Date': 'Month'}
         )
         
-        if bar_width:
-            fig.update_traces(width=bar_width)
+        fig.update_layout(yaxis_tickformat=",.0f")
+        fig.update_xaxes(dtick="M1", tickformat="%b %Y", tickangle=-30)
 
-        # 8. Axis Padding and Layout Fixes
-        fig.update_layout(
-            yaxis_tickformat=",.0f",
-            margin=dict(l=60, r=40, t=50, b=50),
-            xaxis_type='category'
-        )
-        
-        fig.update_xaxes(
-            categoryorder='array', 
-            categoryarray=unique_months, 
-            tickangle=-30,
-            # Range -0.7 to start the "camera" before the first bar to prevent clipping
-            range=[-0.7, len(unique_months) - 0.3] 
-        )
-
-        success_msg = [("", "✅ **File processed successfully.** The aggregate paid claims trend is displayed below.")]
-        return fig, success_msg
+        intro = [("", "📊 File loaded successfully! Here is your aggregate paid claims trend.")]
+        return fig, intro
 
     except Exception as e:
         return None, [("", f"❌ Error loading file: {e}")]
@@ -181,12 +151,13 @@ with gr.Blocks(
 
     gr.Markdown("""
     # 🏥 Healthcare Claims AI Agent
-    **TP01 — Production Ready** | LangChain · LangGraph · Google Gemini 2.5 Flash · Gradio
+    **TP01 — Optimized** | LangChain · LangGraph · Google Gemini 2.5 Flash · Gradio
 
     Upload your Excel claims file to get started. The agent will plot your baseline trend
     and answer natural language questions about anomalies and month-over-month drivers.
 
-    > **Required Format:** Excel file with sheets `fake enrollment` and `fake claims`.
+    > **Required:** Excel file with sheets named `fake enrollment` and `fake claims`,
+    > both containing a `Member_ID` column.
     """)
 
     gr.Markdown("---")
@@ -201,7 +172,7 @@ with gr.Blocks(
         )
         plot_btn = gr.Button("📊 Plot Baseline Trend", variant="primary", scale=1)
 
-    chart_output = gr.Plot(label="Aggregate Monthly Paid Trend")
+    chart_output = gr.Plot(label="Baseline Monthly Billed Trend")
 
     gr.Markdown("---")
 
@@ -210,7 +181,7 @@ with gr.Blocks(
 
     chatbot = gr.Chatbot(
         label="Conversation",
-        height=450,
+        height=380,
         bubble_full_width=False,
         show_label=False
     )
