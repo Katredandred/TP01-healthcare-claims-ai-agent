@@ -144,8 +144,8 @@ Your Excel file must contain two sheets:
 |---|---|---|
 | Kate Lawal | [@Katredandred](https://github.com/Katredandred) | Project Lead · AI Agent Architecture |
 | Nathan Burns | [@burnsnathanielpcbz-jpg](https://github.com/burnsnathanielpcbz-jpg) | Project Lead · AI Agent Architecture|
-| Olufemi Isijola | [@placeholder_username3](https://github.com/placeholder_username3) | *(update with teammate's username)* |
-| Kundan Singh | [@placeholder_username4](https://github.com/placeholder_username4) | *(update with teammate's username)* |
+| Olufemi Isijola | [@doisijola](https://github.com/doisijola) | Project Lead · AI Agent Architecture|
+| Kundan Singh | [@placeholder_username4](https://github.com/placeholder_username4) |  Project Lead · AI Agent Architecture |
 
 ---
 
